@@ -31,6 +31,42 @@ class DownloadFileNameTest {
     }
 
     @Test
+    fun keepsGalleryFileNamesStableAcrossSeparateDownloads() {
+        val mediaSequenceNumbers = mapOf(
+            "https://cdn.example.com/first.jpg" to 0,
+            "https://cdn.example.com/second.jpg" to 1
+        )
+        assertEquals(
+            "photos_1.jpg",
+            buildDownloadFileName(
+                "photos",
+                "图片",
+                "https://cdn.example.com/first.jpg",
+                sequenceNumber = sequenceNumberForDownload(
+                    downloadUrl = "https://cdn.example.com/first.jpg",
+                    mediaSequenceNumbers = mediaSequenceNumbers,
+                    batchIndex = 0,
+                    batchSize = 1
+                )
+            )
+        )
+        assertEquals(
+            "photos_2.jpg",
+            buildDownloadFileName(
+                "photos",
+                "图片",
+                "https://cdn.example.com/second.jpg",
+                sequenceNumber = sequenceNumberForDownload(
+                    downloadUrl = "https://cdn.example.com/second.jpg",
+                    mediaSequenceNumbers = mediaSequenceNumbers,
+                    batchIndex = 0,
+                    batchSize = 1
+                )
+            )
+        )
+    }
+
+    @Test
     fun acceptsOnlyHttpAndHttpsDownloadUrls() {
         assertTrue(isHttpDownloadUrl("https://cdn.example.com/video.mp4"))
         assertFalse(isHttpDownloadUrl("file:///sdcard/video.mp4"))

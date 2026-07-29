@@ -24,6 +24,13 @@ internal fun buildDownloadFileName(
     return "$safeTitle$suffix.$extension"
 }
 
+internal fun sequenceNumberForDownload(
+    downloadUrl: String,
+    mediaSequenceNumbers: Map<String, Int>,
+    batchIndex: Int,
+    batchSize: Int
+): Int? = mediaSequenceNumbers[downloadUrl] ?: batchIndex.takeIf { batchSize > 1 }
+
 internal fun isHttpDownloadUrl(url: String): Boolean = runCatching {
     URI(url).scheme?.lowercase() in setOf("http", "https")
 }.getOrDefault(false)

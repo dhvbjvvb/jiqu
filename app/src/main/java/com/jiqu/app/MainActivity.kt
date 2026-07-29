@@ -299,12 +299,11 @@ private fun ParsePage(
         val clipboardText = clipboard?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
         parserViewModel.pasteClipboardLinkIfEligible(clipboardText)
     }
-    val onDownloads = { title: String, downloads: List<ParsedDownload> ->
-        if (!parserViewModel.startDownloads(title, downloads)) {
+    val onDownloads = { title: String, downloads: List<ParsedDownload>, mediaSequenceNumbers: Map<String, Int> ->
+        if (!parserViewModel.startDownloads(title, downloads, mediaSequenceNumbers)) {
             Toast.makeText(context, "已有下载任务正在进行", Toast.LENGTH_SHORT).show()
         }
     }
-    val onDownload = { title: String, download: ParsedDownload -> onDownloads(title, listOf(download)) }
 
     LaunchedEffect(previewSessionKey, parserViewModel.autoPasteLinks) {
         pasteFirstClipboardItem()
@@ -389,7 +388,9 @@ private fun ParsePage(
                         media = result.media,
                         music = result.media.music,
                         previewSessionKey = previewSessionKey,
-                        onDownload = { downloads -> onDownloads(result.media.title, downloads) }
+                        onDownload = { downloads, mediaSequenceNumbers ->
+                            onDownloads(result.media.title, downloads, mediaSequenceNumbers)
+                        }
                     )
                     null -> Unit
                 }
@@ -407,7 +408,7 @@ private fun ParsedMediaResult(
     media: ParsedMedia,
     music: ParsedDownload?,
     previewSessionKey: Int,
-    onDownload: (List<ParsedDownload>) -> Unit
+    onDownload: (List<ParsedDownload>, Map<String, Int>) -> Unit
 ) {
     var isQualitySheetVisible by remember { mutableStateOf(false) }
     val selectableDownloads = when (media.mediaType) {
@@ -419,6 +420,11 @@ private fun ParsedMediaResult(
     var selectedDownloadUrls by remember(media.sourceUrl) { mutableStateOf(emptySet<String>()) }
     val selectedDownloads = selectableDownloads.filter { it.url in selectedDownloadUrls }
     val downloadsToStart = if (requiresSelection) selectedDownloads else selectableDownloads
+    val mediaSequenceNumbers = if (requiresSelection) {
+        selectableDownloads.mapIndexed { index, download -> download.url to index }.toMap()
+    } else {
+        emptyMap()
+    }
     val canDownload = downloadsToStart.isNotEmpty()
     val allDownloadsSelected = selectableDownloads.isNotEmpty() && selectedDownloadUrls.size == selectableDownloads.size
     val toggleAllDownloads = {
@@ -460,7 +466,7 @@ private fun ParsedMediaResult(
                     mediaType = media.mediaType,
                     enabled = canDownload,
                     modifier = Modifier.weight(1f),
-                    onClick = { onDownload(downloadsToStart) }
+                    onClick = { onDownload(downloadsToStart, mediaSequenceNumbers) }
                 )
             }
         } else {
@@ -469,7 +475,7 @@ private fun ParsedMediaResult(
                 enabled = canDownload,
                 modifier = Modifier.fillMaxWidth(),
                 onClick = {
-                    if (media.mediaType == "视频") isQualitySheetVisible = true else onDownload(downloadsToStart)
+                    if (media.mediaType == "视频") isQualitySheetVisible = true else onDownload(downloadsToStart, emptyMap())
                 }
             )
         }
@@ -483,7 +489,7 @@ private fun ParsedMediaResult(
         music?.let { backgroundMusic ->
             MusicPreviewBar(
                 music = backgroundMusic,
-                onDownload = { onDownload(listOf(it)) }
+                onDownload = { onDownload(listOf(it), emptyMap()) }
             )
         }
     }
@@ -494,7 +500,7 @@ private fun ParsedMediaResult(
             title = downloadSheetTitleFor(media.mediaType),
             onDismiss = { isQualitySheetVisible = false },
             onDownload = { selectedDownload ->
-                onDownload(listOf(selectedDownload))
+                onDownload(listOf(selectedDownload), emptyMap())
                 isQualitySheetVisible = false
             }
         )

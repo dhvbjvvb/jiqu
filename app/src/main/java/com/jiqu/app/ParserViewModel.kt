@@ -156,13 +156,16 @@ internal class ParserViewModel(application: Application) : AndroidViewModel(appl
         return startDownloads(title, listOf(download))
     }
 
-    fun startDownloads(title: String, downloads: List<ParsedDownload>): Boolean {
+    fun startDownloads(
+        title: String,
+        downloads: List<ParsedDownload>,
+        mediaSequenceNumbers: Map<String, Int> = emptyMap()
+    ): Boolean {
         val validDownloads = downloads.distinctBy(ParsedDownload::url).filter { isHttpDownloadUrl(it.url) }
         if (activeDownloadJob?.isActive == true || validDownloads.isEmpty()) return false
 
         val application = getApplication<Application>()
         val cancellationController = DownloadCancellationController()
-        val isBatchDownload = validDownloads.size > 1
 
         downloadCancellationController = cancellationController
         downloadTask = DownloadTaskUiState(
@@ -176,7 +179,12 @@ internal class ParserViewModel(application: Application) : AndroidViewModel(appl
                         application = application,
                         title = title,
                         download = download,
-                        sequenceNumber = if (isBatchDownload) index else null,
+                        sequenceNumber = sequenceNumberForDownload(
+                            downloadUrl = download.url,
+                            mediaSequenceNumbers = mediaSequenceNumbers,
+                            batchIndex = index,
+                            batchSize = validDownloads.size
+                        ),
                         batchIndex = index,
                         batchSize = validDownloads.size,
                         cancellationController = cancellationController
