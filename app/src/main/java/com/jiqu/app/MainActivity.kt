@@ -72,6 +72,7 @@ import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material.icons.outlined.VideoLibrary
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -149,6 +150,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.UUID
 import java.util.LinkedHashMap
+import java.util.Locale
 import kotlin.math.abs
 import com.jiqu.app.ui.theme.ThemeMode
 import com.jiqu.app.ui.theme.即取Theme
@@ -190,15 +192,19 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val parserViewModel: ParserViewModel = viewModel()
+            val updateViewModel: UpdateViewModel = viewModel()
             即取Theme(themeMode = parserViewModel.themeMode) {
-                JinanMediaApp(parserViewModel)
+                JinanMediaApp(parserViewModel, updateViewModel)
             }
         }
     }
 }
 
 @Composable
-private fun JinanMediaApp(parserViewModel: ParserViewModel) {
+private fun JinanMediaApp(
+    parserViewModel: ParserViewModel,
+    updateViewModel: UpdateViewModel
+) {
     var selectedPage by rememberSaveable { mutableStateOf(MainPage.Parse) }
     var previewSessionKey by rememberSaveable { mutableIntStateOf(0) }
     val navigateToPage: (MainPage) -> Unit = { page ->
@@ -250,6 +256,7 @@ private fun JinanMediaApp(parserViewModel: ParserViewModel) {
             MainPage.Settings -> SettingsPage(
                 paddingValues = paddingValues,
                 parserViewModel = parserViewModel,
+                updateViewModel = updateViewModel,
                 onNavigateUp = { navigateToPage(MainPage.Parse) }
             )
         }
@@ -262,7 +269,86 @@ private fun JinanMediaApp(parserViewModel: ParserViewModel) {
             onClose = parserViewModel::dismissDownloadTask
         )
     }
+
+    updateViewModel.availableUpdate?.let { update ->
+        val context = LocalContext.current
+        AppUpdateDialog(
+            update = update,
+            onDismiss = updateViewModel::dismissUpdate,
+            onUpdate = {
+                context.openExternalUrl(update.downloadUrl)
+                updateViewModel.dismissUpdate()
+            }
+        )
+    }
 }
+
+@Composable
+private fun AppUpdateDialog(
+    update: AppUpdate,
+    onDismiss: () -> Unit,
+    onUpdate: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier.fillMaxWidth().heightIn(max = 540.dp),
+            shape = PageShape,
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text("发现新版本", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(
+                    text = "v${update.versionName}" + update.assetSizeBytes.toDisplayFileSize(),
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                if (update.releaseNotes.isNotBlank()) {
+                    Text(
+                        text = update.releaseNotes,
+                        modifier = Modifier
+                            .heightIn(max = 236.dp)
+                            .verticalScroll(rememberScrollState()),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f),
+                        shape = SmallShape,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    ) {
+                        Text("稍后再说")
+                    }
+                    Button(
+                        onClick = onUpdate,
+                        modifier = Modifier.weight(1f),
+                        shape = SmallShape,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Icon(Icons.Outlined.SystemUpdate, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("立即更新")
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun Long.toDisplayFileSize(): String =
+    if (this > 0) "  ${String.format(Locale.US, "%.2f MB", this / (1024f * 1024f))}" else ""
 
 @Composable
 private fun AppTopBar(selectedPage: MainPage) {
@@ -1850,6 +1936,7 @@ private fun HistoryEntryRow(
 private fun SettingsPage(
     paddingValues: PaddingValues,
     parserViewModel: ParserViewModel,
+    updateViewModel: UpdateViewModel,
     onNavigateUp: () -> Unit
 ) {
     val context = LocalContext.current
@@ -1857,6 +1944,13 @@ private fun SettingsPage(
     var isThemeSettingsPageVisible by rememberSaveable { mutableStateOf(false) }
     var isStoragePageVisible by rememberSaveable { mutableStateOf(false) }
     var isFeedbackPageVisible by rememberSaveable { mutableStateOf(false) }
+    val updateCheckMessage = updateViewModel.checkMessage
+    LaunchedEffect(updateCheckMessage) {
+        updateCheckMessage?.let { message ->
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+            updateViewModel.consumeCheckMessage()
+        }
+    }
     BackHandler {
         when {
             isParserPreferencesPageVisible -> isParserPreferencesPageVisible = false
@@ -1913,6 +2007,13 @@ private fun SettingsPage(
         SupportedPlatformsCard()
         SettingsGroup("关于") {
             SettingsValueRow("当前版本", Icons.Outlined.Info, BuildConfig.VERSION_NAME, showChevron = false)
+            SettingsValueRow(
+                label = "检查更新",
+                icon = Icons.Outlined.SystemUpdate,
+                value = if (updateViewModel.isChecking) "正在检查" else "",
+                showChevron = !updateViewModel.isChecking,
+                onClick = { updateViewModel.checkForUpdate(force = true) }
+            )
             SettingsValueRow(
                 label = "开源地址",
                 icon = Icons.Outlined.Language,
@@ -2187,5 +2288,5 @@ private fun SettingsSelectionRow(label: String, selected: Boolean, onClick: () -
 @Preview(showBackground = true)
 @Composable
 private fun JinanMediaAppPreview() {
-    即取Theme { JinanMediaApp(viewModel()) }
+    即取Theme { JinanMediaApp(viewModel(), viewModel()) }
 }
