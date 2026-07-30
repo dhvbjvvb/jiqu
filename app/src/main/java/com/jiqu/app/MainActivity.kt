@@ -208,8 +208,16 @@ private fun JinanMediaApp(
     parserViewModel: ParserViewModel,
     updateViewModel: UpdateViewModel
 ) {
+    val context = LocalContext.current
     var selectedPage by rememberSaveable { mutableStateOf(MainPage.Parse) }
     var previewSessionKey by rememberSaveable { mutableIntStateOf(0) }
+    val updateCheckMessage = updateViewModel.checkMessage
+    LaunchedEffect(updateCheckMessage) {
+        updateCheckMessage?.let { message ->
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+            updateViewModel.consumeCheckMessage()
+        }
+    }
     val navigateToPage: (MainPage) -> Unit = { page ->
         if (page == MainPage.Parse && selectedPage != MainPage.Parse) previewSessionKey++
         selectedPage = page
@@ -274,7 +282,6 @@ private fun JinanMediaApp(
     }
 
     updateViewModel.availableUpdate?.let { update ->
-        val context = LocalContext.current
         AppUpdateDialog(
             update = update,
             onDismiss = updateViewModel::dismissUpdate,
@@ -2033,13 +2040,6 @@ private fun SettingsPage(
     var isThemeSettingsPageVisible by rememberSaveable { mutableStateOf(false) }
     var isStoragePageVisible by rememberSaveable { mutableStateOf(false) }
     var isFeedbackPageVisible by rememberSaveable { mutableStateOf(false) }
-    val updateCheckMessage = updateViewModel.checkMessage
-    LaunchedEffect(updateCheckMessage) {
-        updateCheckMessage?.let { message ->
-            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-            updateViewModel.consumeCheckMessage()
-        }
-    }
     BackHandler {
         when {
             isParserPreferencesPageVisible -> isParserPreferencesPageVisible = false

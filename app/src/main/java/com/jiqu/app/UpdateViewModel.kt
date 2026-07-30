@@ -1,11 +1,9 @@
 package com.jiqu.app
 
 import android.app.Application
-import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -124,7 +122,6 @@ internal class GitHubReleaseUpdateClient {
 }
 
 internal class UpdateViewModel(application: Application) : AndroidViewModel(application) {
-    private val preferences = application.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
     private val updateClient = GitHubReleaseUpdateClient()
 
     var availableUpdate by mutableStateOf<AppUpdate?>(null)
@@ -139,7 +136,7 @@ internal class UpdateViewModel(application: Application) : AndroidViewModel(appl
     }
 
     fun checkForUpdate(force: Boolean) {
-        if (isChecking || (!force && !shouldCheckAutomatically())) return
+        if (isChecking) return
 
         isChecking = true
         checkMessage = null
@@ -147,15 +144,11 @@ internal class UpdateViewModel(application: Application) : AndroidViewModel(appl
             val result = withContext(Dispatchers.IO) { updateClient.checkForUpdate(BuildConfig.VERSION_NAME) }
             isChecking = false
             when (result) {
-                is UpdateCheckResult.Available -> {
-                    recordSuccessfulCheck()
+            is UpdateCheckResult.Available -> {
                     availableUpdate = result.update
                 }
-                UpdateCheckResult.UpToDate -> {
-                    recordSuccessfulCheck()
-                    if (force) checkMessage = "当前已是最新版本"
-                }
-                UpdateCheckResult.Failed -> if (force) checkMessage = "检查更新失败，请稍后重试"
+                UpdateCheckResult.UpToDate -> if (force) checkMessage = "当前已是最新版本"
+                UpdateCheckResult.Failed -> checkMessage = "检查更新失败，请稍后重试"
             }
         }
     }
@@ -168,16 +161,4 @@ internal class UpdateViewModel(application: Application) : AndroidViewModel(appl
         checkMessage = null
     }
 
-    private fun shouldCheckAutomatically(): Boolean =
-        System.currentTimeMillis() - preferences.getLong(LAST_CHECKED_AT_KEY, 0) >= AUTO_CHECK_INTERVAL_MILLIS
-
-    private fun recordSuccessfulCheck() {
-        preferences.edit { putLong(LAST_CHECKED_AT_KEY, System.currentTimeMillis()) }
-    }
-
-    private companion object {
-        const val PREFERENCES_NAME = "update_preferences"
-        const val LAST_CHECKED_AT_KEY = "last_checked_at"
-        const val AUTO_CHECK_INTERVAL_MILLIS = 6 * 60 * 60 * 1_000L
-    }
 }
