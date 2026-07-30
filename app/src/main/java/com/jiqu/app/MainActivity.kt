@@ -283,8 +283,12 @@ private fun JinanMediaApp(
                 updateViewModel.dismissUpdate()
             },
             onLanzouUpdate = {
-                context.copyLanzouExtractCode()
-                context.openExternalUrl(LANZOU_UPDATE_URL)
+                if (context.copyLanzouExtractCode()) {
+                    Handler(Looper.getMainLooper()).postDelayed(
+                        { context.openExternalUrl(LANZOU_UPDATE_URL) },
+                        LANZOU_UPDATE_OPEN_DELAY_MS
+                    )
+                }
                 updateViewModel.dismissUpdate()
             }
         )
@@ -1794,16 +1798,31 @@ private fun Context.openExternalUrl(url: String) {
     startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
 }
 
-private fun Context.copyLanzouExtractCode() {
-    getSystemService(ClipboardManager::class.java)?.setPrimaryClip(
-        ClipData.newPlainText("蓝奏云提取码", LANZOU_EXTRACT_CODE)
-    )
-    Toast.makeText(this, "蓝奏云提取码已复制：$LANZOU_EXTRACT_CODE", Toast.LENGTH_SHORT).show()
+private fun Context.copyLanzouExtractCode(): Boolean {
+    val clipboardManager = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+    if (clipboardManager == null) {
+        Toast.makeText(this, "无法访问系统剪贴板，请手动输入提取码：$LANZOU_EXTRACT_CODE", Toast.LENGTH_LONG).show()
+        return false
+    }
+
+    clipboardManager.setPrimaryClip(ClipData.newPlainText("蓝奏云提取码", LANZOU_EXTRACT_CODE))
+    val copiedText = clipboardManager.primaryClip
+        ?.getItemAt(0)
+        ?.coerceToText(this)
+        ?.toString()
+    val copied = copiedText == LANZOU_EXTRACT_CODE
+    Toast.makeText(
+        this,
+        if (copied) "蓝奏云提取码已复制：$LANZOU_EXTRACT_CODE" else "复制失败，请手动输入提取码：$LANZOU_EXTRACT_CODE",
+        Toast.LENGTH_LONG
+    ).show()
+    return copied
 }
 
 private const val OPEN_SOURCE_URL = "https://github.com/dhvbjvvb/jiqu"
 private const val LANZOU_UPDATE_URL = "https://wwbjl.lanzout.com/b01d74gqdc"
 private const val LANZOU_EXTRACT_CODE = "3nwk"
+private const val LANZOU_UPDATE_OPEN_DELAY_MS = 300L
 
 @Composable
 private fun HistoryPage(

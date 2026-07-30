@@ -15,8 +15,8 @@ android {
         applicationId = "com.jiqu.app"
         minSdk = 31
         targetSdk = 36
-        versionCode = 1504
-        versionName = "1.5.4"
+        versionCode = 1505
+        versionName = "1.5.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
