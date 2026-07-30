@@ -891,8 +891,16 @@ private fun VideoPreview(media: ParsedMedia, previewSessionKey: Int) {
                                             player = mediaPlayer
                                             videoSurface?.release()
                                             videoSurface = Surface(surfaceTexture)
-                                            mediaPlayer.setSurface(videoSurface)
-                                            mediaPlayer.setDataSource(context, previewUrl.toUri())
+                                            val dataSourceResult = runCatching {
+                                                mediaPlayer.setSurface(videoSurface)
+                                                mediaPlayer.setDataSource(context, previewUrl.toUri(), PREVIEW_REQUEST_HEADERS)
+                                            }
+                                            if (dataSourceResult.isFailure) {
+                                                previewError = "视频预览地址不可用，仍可使用下载功能"
+                                                mediaPlayer.release()
+                                                if (player === mediaPlayer) player = null
+                                                return@also
+                                            }
                                             mediaPlayer.setOnPreparedListener { preparedPlayer ->
                                                 durationMillis = preparedPlayer.duration.coerceAtLeast(0)
                                                 textureView.post {
@@ -1449,6 +1457,11 @@ private const val FIRST_FRAME_FALLBACK_MILLIS = 750L
 private const val COVER_CONNECT_TIMEOUT_MILLIS = 10_000
 private const val COVER_READ_TIMEOUT_MILLIS = 15_000
 private const val COVER_USER_AGENT = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36"
+private val PREVIEW_REQUEST_HEADERS = mapOf(
+    "User-Agent" to COVER_USER_AGENT,
+    "Accept" to "video/mp4,video/*;q=0.9,*/*;q=0.8",
+    "Accept-Encoding" to "identity"
+)
 private const val ZUIYOU_PLATFORM_NAME = "最右"
 
 internal suspend fun downloadWithMediaStore(
@@ -1580,9 +1593,18 @@ private suspend fun downloadSequentially(
 ) {
     val connection = openDownloadConnection(sourceUrl, cancellationController)
     try {
+        check(connection.responseCode in 200..299) {
+            "Download request failed with HTTP ${connection.responseCode}"
+        }
         connection.inputStream.use { input ->
             requireNotNull(resolver.openOutputStream(destinationUri)).use { output ->
-                val totalBytes = connection.contentLengthLong
+                val totalBytes = connection.getHeaderField("Content-Range")
+                    ?.let(CONTENT_RANGE_TOTAL_BYTES::find)
+                    ?.groupValues
+                    ?.getOrNull(1)
+                    ?.toLongOrNull()
+                    ?.takeIf { it > 0 }
+                    ?: connection.contentLengthLong
                 val buffer = ByteArray(DOWNLOAD_BUFFER_SIZE)
                 var downloadedBytes = 0L
                 while (true) {
@@ -1638,6 +1660,12 @@ private suspend fun downloadByteRange(
     try {
         if (connection.responseCode != HttpURLConnection.HTTP_PARTIAL) {
             throw RangeDownloadUnsupportedException()
+        }
+        val contentRange = connection.getHeaderField("Content-Range")
+            ?.let(CONTENT_RANGE_DETAILS::matchEntireText)
+            ?: throw RangeDownloadUnsupportedException()
+        check(contentRange.start == range.startInclusive && contentRange.end == range.endInclusive) {
+            "Server returned an unexpected byte range"
         }
         var receivedBytes = 0L
         connection.inputStream.use { input ->
@@ -1714,6 +1742,20 @@ private fun openDownloadConnection(
     }.also(cancellationController::register)
 
 private class RangeDownloadUnsupportedException : IllegalStateException("The server did not return a partial response")
+
+private data class ContentRangeDetails(val start: Long, val end: Long, val total: Long)
+
+private val CONTENT_RANGE_DETAILS = object {
+    fun matchEntireText(value: String): ContentRangeDetails? {
+        val match = Regex("bytes\\s+(\\d+)-(\\d+)/(\\d+)", RegexOption.IGNORE_CASE).matchEntire(value.trim())
+            ?: return null
+        return ContentRangeDetails(
+            start = match.groupValues[1].toLongOrNull() ?: return null,
+            end = match.groupValues[2].toLongOrNull() ?: return null,
+            total = match.groupValues[3].toLongOrNull() ?: return null
+        )
+    }
+}
 
 internal class DownloadCancellationController {
     private val cancelled = AtomicBoolean(false)

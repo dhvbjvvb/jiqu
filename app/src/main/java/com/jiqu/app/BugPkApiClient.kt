@@ -9,6 +9,7 @@ import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.util.Locale
 
 internal data class SupportedPlatform(
     val id: String,
@@ -56,7 +57,12 @@ internal object PlatformDetector {
 
 internal data class ParsedDownload(
     val label: String,
-    val url: String
+    val url: String,
+    val width: Int? = null,
+    val height: Int? = null,
+    val codec: String? = null,
+    val bitRate: Long? = null,
+    val hasAudio: Boolean? = null
 )
 
 internal data class ParsedGalleryItem(
@@ -414,14 +420,18 @@ internal class BugPkApiClient {
             }
             is JSONObject -> {
                 if (!isDirectlyDownloadableVideoFormat(value.optString("format"))) return
-                val label = value.firstNonBlank("quality", "label", "name") ?: defaultLabel
+                val label = formatVideoDownloadLabel(value, defaultLabel)
+                val width = value.optInt("width").takeIf { it > 0 }
+                val height = value.optInt("height").takeIf { it > 0 }
+                val codec = value.optString("codec").trim().takeIf { it.isNotEmpty() }
+                val bitRate = value.optLong("bit_rate").takeIf { it > 0 }
                 value.optString("url").takeIf { it.isHttpUrl() }?.let { url ->
                     val playableUrl = normalizeVideoUrlForPlayback(url, platformId)
-                    downloads[playableUrl] = ParsedDownload(label, playableUrl)
+                    downloads[playableUrl] = ParsedDownload(label, playableUrl, width, height, codec, bitRate)
                 }
                 value.optString("video").takeIf { it.isHttpUrl() }?.let { url ->
                     val playableUrl = normalizeVideoUrlForPlayback(url, platformId)
-                    downloads[playableUrl] = ParsedDownload(label, playableUrl)
+                    downloads[playableUrl] = ParsedDownload(label, playableUrl, width, height, codec, bitRate)
                 }
                 value.keys().forEach { key ->
                     if (key !in mediaKeys) collectPlayableVideoUrls(value.opt(key), key, platformId, downloads)
@@ -472,6 +482,20 @@ internal class BugPkApiClient {
 
     private fun JSONObject.firstNonBlank(vararg keys: String): String? =
         keys.asSequence().map { optString(it).trim() }.firstOrNull { it.isNotEmpty() }
+
+    private fun formatVideoDownloadLabel(value: JSONObject, defaultLabel: String): String {
+        val quality = value.firstNonBlank("quality")
+        val width = value.optInt("width").takeIf { it > 0 }
+        val height = value.optInt("height").takeIf { it > 0 }
+        val resolution = quality ?: videoQualityLabel(width, height)
+        val codec = value.optString("codec").trim().takeIf { it.isNotEmpty() }?.uppercase()
+        val bitRate = value.optLong("bit_rate")
+            .takeIf { it > 0 }
+            ?.let { "${(it / 1_000f).formatOneDecimal()} Mbps" }
+        return listOfNotNull(resolution, codec, bitRate).joinToString(" · ").ifBlank { defaultLabel }
+    }
+
+    private fun Float.formatOneDecimal(): String = "%.1f".format(Locale.US, this)
 
     private fun String.isDynamicLivePhotoFormat(): Boolean = lowercase() in DYNAMIC_LIVE_PHOTO_FORMATS
 

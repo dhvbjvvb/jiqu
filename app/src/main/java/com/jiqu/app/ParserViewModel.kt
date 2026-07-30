@@ -101,12 +101,17 @@ internal class ParserViewModel(application: Application) : AndroidViewModel(appl
         viewModelScope.launch {
             val parseResult = withContext(Dispatchers.IO) { apiClient.parse(sharedText) }
             completeParsing(parseResult)
-            if (parseResult is ParseResult.Success) {
+            if (parseResult is ParseResult.Success && parseResult.media.mediaType == "视频") {
                 val resolvedDownloads = withContext(Dispatchers.IO) {
-                    resolveVideoQualityLabels(parseResult.media.videoDownloads)
+                    resolveVideoDownloads(parseResult.media.videoDownloads)
                 }
                 if (result === parseResult) {
-                    result = ParseResult.Success(parseResult.media.copy(videoDownloads = resolvedDownloads))
+                    result = ParseResult.Success(
+                        parseResult.media.copy(
+                            videoDownloads = resolvedDownloads,
+                            previewUrl = selectPreviewVideoUrl(parseResult.media.previewUrl, resolvedDownloads)
+                        )
+                    )
                 }
             }
         }
