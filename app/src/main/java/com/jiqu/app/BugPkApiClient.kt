@@ -59,6 +59,39 @@ internal data class ParsedDownload(
     val url: String
 )
 
+internal data class ParsedGalleryItem(
+    val previewUrl: String?,
+    val download: ParsedDownload
+)
+
+private data class LivePhotoDownload(
+    val imageUrl: String?,
+    val download: ParsedDownload
+)
+
+internal fun buildGalleryItems(
+    imageUrls: List<String>,
+    liveDownloadsByImageUrl: Map<String, ParsedDownload>,
+    unpairedLiveDownloads: List<ParsedDownload>
+): List<ParsedGalleryItem> {
+    val remainingLiveDownloads = liveDownloadsByImageUrl.toMutableMap()
+    val galleryItems = imageUrls.map { imageUrl ->
+        ParsedGalleryItem(
+            previewUrl = imageUrl,
+            download = remainingLiveDownloads.remove(imageUrl)
+                ?: ParsedDownload("图片", imageUrl)
+        )
+    }.toMutableList()
+
+    remainingLiveDownloads.values.forEach { liveDownload ->
+        galleryItems += ParsedGalleryItem(previewUrl = null, download = liveDownload)
+    }
+    unpairedLiveDownloads.forEach { liveDownload ->
+        galleryItems += ParsedGalleryItem(previewUrl = null, download = liveDownload)
+    }
+    return galleryItems
+}
+
 internal fun isDirectlyDownloadableVideoFormat(format: String): Boolean =
     !format.equals("dash", ignoreCase = true)
 
@@ -80,6 +113,7 @@ internal data class ParsedMedia(
     val mediaType: String,
     val previewUrl: String?,
     val videoDownloads: List<ParsedDownload>,
+    val galleryItems: List<ParsedGalleryItem>,
     val music: ParsedDownload?
 )
 
@@ -148,15 +182,16 @@ internal class BugPkApiClient {
             ?: return ParseResult.Failure("仅支持哔哩哔哩、抖音、快手、皮皮虾、皮皮搞笑、今日头条、微博、微信视频号、小红书和最右链接")
 
         return runCatching {
-            val response = request(supportedLink.url, supportedLink.platform.id)
-            val root = JSONObject(response)
+            val root = requestWithRetry(supportedLink.url, supportedLink.platform.id)
             if (root.optInt("code", 0) != 200) {
                 return ParseResult.Failure(root.optString("msg", "解析服务暂时不可用"))
             }
 
             val data = root.optJSONObject("data")
                 ?: return ParseResult.Failure("解析服务未返回媒体数据")
-            val videoDownloads = extractVideoDownloads(data, supportedLink.platform.id)
+            val galleryItems = extractGalleryItems(data)
+            val videoDownloads = galleryItems.map(ParsedGalleryItem::download)
+                .ifEmpty { extractVideoDownloads(data, supportedLink.platform.id) }
             if (videoDownloads.isEmpty()) {
                 return ParseResult.Failure("未获取到可下载的媒体地址")
             }
@@ -187,6 +222,7 @@ internal class BugPkApiClient {
                             ?: videoDownloads.firstOrNull()?.url
                     },
                     videoDownloads = videoDownloads,
+                    galleryItems = galleryItems,
                     music = data.optJSONObject("music")?.optString("url")
                         ?.takeIf { it.isHttpUrl() }
                         ?.let { ParsedDownload("背景音乐", it) }
@@ -195,6 +231,32 @@ internal class BugPkApiClient {
         }.getOrElse { error ->
             ParseResult.Failure(error.message ?: "网络请求失败，请稍后重试")
         }
+    }
+
+    private fun requestWithRetry(sharedUrl: String, platformId: String): JSONObject {
+        var lastResponse: JSONObject? = null
+        var lastError: Throwable? = null
+
+        repeat(PARSE_REQUEST_ATTEMPTS) { attempt ->
+            try {
+                val response = JSONObject(request(sharedUrl, platformId))
+                lastResponse = response
+                if (response.optInt("code", 0) == 200 && response.optJSONObject("data") != null) {
+                    return response
+                }
+            } catch (error: Exception) {
+                lastError = error
+            }
+
+            if (attempt < PARSE_REQUEST_ATTEMPTS - 1) {
+                Thread.sleep(PARSE_RETRY_DELAY_MILLIS * (attempt + 1))
+            }
+        }
+
+        return lastResponse ?: throw IllegalStateException(
+            "解析服务暂时不可用，请稍后重试",
+            lastError
+        )
     }
 
     private fun request(sharedUrl: String, platformId: String): String {
@@ -255,6 +317,89 @@ internal class BugPkApiClient {
             }
         }
         return downloads.values.toList()
+    }
+
+    private fun extractGalleryItems(data: JSONObject): List<ParsedGalleryItem> {
+        val type = data.optString("type", "video")
+        if (type != "image" && type != "live") return emptyList()
+
+        val imageUrls = extractImageUrls(data.opt("images"))
+        val liveDownloads = extractLiveDownloads(data.opt("live_photo"))
+        val liveDownloadsByImageUrl = liveDownloads
+            .filter { it.imageUrl != null }
+            .associateTo(linkedMapOf()) { it.imageUrl!! to it.download }
+        return buildGalleryItems(
+            imageUrls = imageUrls,
+            liveDownloadsByImageUrl = liveDownloadsByImageUrl,
+            unpairedLiveDownloads = liveDownloads
+                .filter { it.imageUrl == null }
+                .map(LivePhotoDownload::download)
+        )
+    }
+
+    private fun extractImageUrls(value: Any?): List<String> {
+        val imageUrls = linkedSetOf<String>()
+        collectImageUrls(value, imageUrls)
+        return imageUrls.toList()
+    }
+
+    private fun collectImageUrls(value: Any?, imageUrls: MutableSet<String>) {
+        when (value) {
+            is JSONArray -> (0 until value.length()).forEach { collectImageUrls(value.opt(it), imageUrls) }
+            is JSONObject -> {
+                IMAGE_URL_KEYS.forEach { key ->
+                    value.optString(key).takeIf { it.isHttpUrl() }?.let(imageUrls::add)
+                }
+                value.keys().forEach { key ->
+                    if (key !in IMAGE_URL_KEYS && key !in mediaKeys) {
+                        collectImageUrls(value.opt(key), imageUrls)
+                    }
+                }
+            }
+            is String -> value.takeIf { it.isHttpUrl() }?.let(imageUrls::add)
+        }
+    }
+
+    private fun extractLiveDownloads(value: Any?): List<LivePhotoDownload> {
+        val liveDownloads = mutableListOf<LivePhotoDownload>()
+        collectLiveDownloads(value, liveDownloads)
+        return liveDownloads.distinctBy { it.imageUrl to it.download.url }
+    }
+
+    private fun collectLiveDownloads(
+        value: Any?,
+        liveDownloads: MutableList<LivePhotoDownload>
+    ) {
+        when (value) {
+            is JSONArray -> (0 until value.length()).forEach {
+                collectLiveDownloads(value.opt(it), liveDownloads)
+            }
+            is JSONObject -> {
+                val imageUrl = IMAGE_URL_KEYS.asSequence()
+                    .map(value::optString)
+                    .firstOrNull { it.isHttpUrl() }
+                val liveUrl = LIVE_PHOTO_URL_KEYS.asSequence()
+                    .map(value::optString)
+                    .firstOrNull { it.isHttpUrl() }
+                    ?: value.optString("url")
+                        .takeIf { it.isHttpUrl() && value.optString("format").isDynamicLivePhotoFormat() }
+                if (liveUrl != null) {
+                    liveDownloads += LivePhotoDownload(
+                        imageUrl = imageUrl,
+                        download = ParsedDownload("实况动态内容", liveUrl)
+                    )
+                }
+                LIVE_PHOTO_NESTED_KEYS.forEach { key ->
+                    collectLiveDownloads(value.opt(key), liveDownloads)
+                }
+            }
+            is String -> value.takeIf { it.isHttpUrl() && it.hasDynamicLivePhotoExtension() }?.let { url ->
+                liveDownloads += LivePhotoDownload(
+                    imageUrl = null,
+                    download = ParsedDownload("实况动态内容", url)
+                )
+            }
+        }
     }
 
     private fun collectPlayableVideoUrls(
@@ -347,7 +492,10 @@ internal class BugPkApiClient {
     private companion object {
         const val CONNECT_TIMEOUT_MILLIS = 15_000
         const val READ_TIMEOUT_MILLIS = 30_000
+        const val PARSE_REQUEST_ATTEMPTS = 3
+        const val PARSE_RETRY_DELAY_MILLIS = 400L
         val mediaKeys = setOf("url", "image", "video", "quality", "label", "name")
+        val IMAGE_URL_KEYS = setOf("image", "url", "src", "uri")
         val LIVE_PHOTO_URL_KEYS = setOf("video", "live", "live_url", "file")
         val LIVE_PHOTO_NESTED_KEYS = setOf("live_photo", "live_video", "motion")
         val DYNAMIC_LIVE_PHOTO_FORMATS = setOf("live", "video", "mp4", "mov", "webm", "gif", "animated_webp")

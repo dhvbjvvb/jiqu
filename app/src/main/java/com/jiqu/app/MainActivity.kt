@@ -411,12 +411,9 @@ private fun ParsedMediaResult(
     onDownload: (List<ParsedDownload>, Map<String, Int>) -> Unit
 ) {
     var isQualitySheetVisible by remember { mutableStateOf(false) }
-    val selectableDownloads = when (media.mediaType) {
-        "实况" -> media.videoDownloads.filter { it.label == "实况动态内容" }
-        else -> media.videoDownloads
-    }
-    val supportsSelection = media.mediaType == "图集" || media.mediaType == "实况"
-    val requiresSelection = supportsSelection && selectableDownloads.size >= 2
+    val galleryItems = media.galleryItems
+    val selectableDownloads = galleryItems.map(ParsedGalleryItem::download).ifEmpty { media.videoDownloads }
+    val requiresSelection = galleryItems.size >= 2
     var selectedDownloadUrls by remember(media.sourceUrl) { mutableStateOf(emptySet<String>()) }
     val selectedDownloads = selectableDownloads.filter { it.url in selectedDownloadUrls }
     val downloadsToStart = if (requiresSelection) selectedDownloads else selectableDownloads
@@ -440,7 +437,7 @@ private fun ParsedMediaResult(
         MediaPreview(
             media = media,
             previewSessionKey = previewSessionKey,
-            selectableDownloads = selectableDownloads,
+            galleryItems = galleryItems,
             selectedDownloadUrls = selectedDownloadUrls,
             onSelectionChange = { url ->
                 selectedDownloadUrls = if (url in selectedDownloadUrls) {
@@ -479,7 +476,7 @@ private fun ParsedMediaResult(
                 }
             )
         }
-        if (media.mediaType == "实况" && selectableDownloads.isEmpty()) {
+        if (media.mediaType == "实况" && galleryItems.isEmpty() && selectableDownloads.isEmpty()) {
             Text(
                 "当前链接未提供可下载的实况动态内容",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -531,88 +528,65 @@ private fun DownloadMediaButton(
 private fun MediaPreview(
     media: ParsedMedia,
     previewSessionKey: Int,
-    selectableDownloads: List<ParsedDownload>,
+    galleryItems: List<ParsedGalleryItem>,
     selectedDownloadUrls: Set<String>,
     onSelectionChange: (String) -> Unit
 ) {
-    when (media.mediaType) {
-        "图集" -> ImageGalleryPreview(
+    if (galleryItems.isNotEmpty()) {
+        GalleryPreview(
             media = media,
-            imageDownloads = selectableDownloads,
+            galleryItems = galleryItems,
             selectedDownloadUrls = selectedDownloadUrls,
             onSelectionChange = onSelectionChange
         )
-        "实况" -> LivePhotoPreview(
-            media = media,
-            livePhotoDownloads = selectableDownloads,
-            selectedDownloadUrls = selectedDownloadUrls,
-            onSelectionChange = onSelectionChange
-        )
-        else -> VideoPreview(media = media, previewSessionKey = previewSessionKey)
+    } else {
+        VideoPreview(media = media, previewSessionKey = previewSessionKey)
     }
 }
 
 @Composable
-private fun ImageGalleryPreview(
+private fun GalleryPreview(
     media: ParsedMedia,
-    imageDownloads: List<ParsedDownload>,
+    galleryItems: List<ParsedGalleryItem>,
     selectedDownloadUrls: Set<String>,
     onSelectionChange: (String) -> Unit
 ) {
     SelectableMediaGallery(
         galleryKey = media.sourceUrl,
-        previewUrls = imageDownloads.map(ParsedDownload::url),
-        selectableDownloads = imageDownloads,
+        galleryItems = galleryItems,
         fallbackPreviewUrl = media.coverUrl,
         selectedDownloadUrls = selectedDownloadUrls,
         onSelectionChange = onSelectionChange,
-        contentDescription = "图集图片"
-    )
-}
-
-@Composable
-private fun LivePhotoPreview(
-    media: ParsedMedia,
-    livePhotoDownloads: List<ParsedDownload>,
-    selectedDownloadUrls: Set<String>,
-    onSelectionChange: (String) -> Unit
-) {
-    val previewUrls = media.videoDownloads.filter { it.label.contains("图片") }.map(ParsedDownload::url)
-    SelectableMediaGallery(
-        galleryKey = media.sourceUrl + "-live",
-        previewUrls = previewUrls,
-        selectableDownloads = livePhotoDownloads,
-        fallbackPreviewUrl = media.coverUrl,
-        selectedDownloadUrls = selectedDownloadUrls,
-        onSelectionChange = onSelectionChange,
-        contentDescription = "实况封面"
+        contentDescription = if (media.mediaType == "实况") "实况封面" else "图集图片"
     )
 }
 
 @Composable
 private fun SelectableMediaGallery(
     galleryKey: String,
-    previewUrls: List<String>,
-    selectableDownloads: List<ParsedDownload>,
+    galleryItems: List<ParsedGalleryItem>,
     fallbackPreviewUrl: String?,
     selectedDownloadUrls: Set<String>,
     onSelectionChange: (String) -> Unit,
     contentDescription: String
 ) {
     var currentImageIndex by rememberSaveable(galleryKey) { mutableIntStateOf(0) }
-    val currentDownload = selectableDownloads.getOrNull(currentImageIndex)
-    val currentPreviewUrl = previewUrls.getOrNull(currentImageIndex) ?: fallbackPreviewUrl
-    val allowsSelection = selectableDownloads.size >= 2
+    val currentGalleryItem = galleryItems.getOrNull(currentImageIndex)
+    val currentDownload = currentGalleryItem?.download
+    val currentPreviewUrl = currentGalleryItem?.previewUrl ?: fallbackPreviewUrl
+    val allowsSelection = galleryItems.size >= 2
     val isCurrentImageSelected = currentDownload?.url in selectedDownloadUrls
 
-    LaunchedEffect(galleryKey, currentImageIndex, previewUrls) {
-        if (previewUrls.size > 1) {
+    LaunchedEffect(galleryKey, currentImageIndex, galleryItems) {
+        if (galleryItems.size > 1) {
             val adjacentIndexes = listOf(
-                (currentImageIndex + 1) % previewUrls.size,
-                (currentImageIndex - 1 + previewUrls.size) % previewUrls.size
+                (currentImageIndex + 1) % galleryItems.size,
+                (currentImageIndex - 1 + galleryItems.size) % galleryItems.size
             ).distinct()
             withContext(Dispatchers.IO) {
-                adjacentIndexes.forEach { index -> preloadCoverBitmap(previewUrls[index]) }
+                adjacentIndexes.forEach { index ->
+                    galleryItems[index].previewUrl?.let(::preloadCoverBitmap)
+                }
             }
         }
     }
@@ -630,8 +604,8 @@ private fun SelectableMediaGallery(
                     currentDownload?.url?.let(onSelectionChange)
                 }
                 .then(
-                    if (selectableDownloads.size > 1) {
-                        Modifier.pointerInput(galleryKey, selectableDownloads.size) {
+                    if (galleryItems.size > 1) {
+                        Modifier.pointerInput(galleryKey, galleryItems.size) {
                             var horizontalDragDistance = 0f
                             detectHorizontalDragGestures(
                                 onDragStart = { horizontalDragDistance = 0f },
@@ -642,7 +616,7 @@ private fun SelectableMediaGallery(
                                 onDragEnd = {
                                     currentImageIndex = galleryIndexForSwipe(
                                         currentIndex = currentImageIndex,
-                                        itemCount = selectableDownloads.size,
+                                        itemCount = galleryItems.size,
                                         horizontalDragDistance = horizontalDragDistance
                                     )
                                 }
@@ -672,25 +646,25 @@ private fun SelectableMediaGallery(
                     )
                 }
             }
-            if (selectableDownloads.size > 1) {
+            if (galleryItems.size > 1) {
                 IconButton(
                     onClick = {
-                        currentImageIndex = (currentImageIndex - 1 + selectableDownloads.size) % selectableDownloads.size
+                        currentImageIndex = (currentImageIndex - 1 + galleryItems.size) % galleryItems.size
                     },
                     modifier = Modifier.align(Alignment.CenterStart).padding(8.dp)
                 ) {
                     Icon(Icons.Outlined.ChevronLeft, contentDescription = "上一张图片", tint = Color.White)
                 }
                 IconButton(
-                    onClick = { currentImageIndex = (currentImageIndex + 1) % selectableDownloads.size },
+                    onClick = { currentImageIndex = (currentImageIndex + 1) % galleryItems.size },
                     modifier = Modifier.align(Alignment.CenterEnd).padding(8.dp)
                 ) {
                     Icon(Icons.Outlined.ChevronRight, contentDescription = "下一张图片", tint = Color.White)
                 }
             }
-            if (selectableDownloads.isNotEmpty()) {
+            if (galleryItems.isNotEmpty()) {
                 Text(
-                    text = "${currentImageIndex + 1} / ${selectableDownloads.size}",
+                    text = "${currentImageIndex + 1} / ${galleryItems.size}",
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(10.dp)

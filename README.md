@@ -6,14 +6,14 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Android-12%2B-3DDC84?logo=android&logoColor=white" alt="Android 12+" />
-  <img src="https://img.shields.io/badge/version-1.4.7-2EA7E0" alt="Version 1.4.7" />
-  <img src="https://img.shields.io/badge/R8%20release-%7E2.7%20MB-FF8A00" alt="R8 release about 2.7 MB" />
+  <img src="https://img.shields.io/badge/version-1.5.2-2EA7E0" alt="Version 1.5.2" />
+  <img src="https://img.shields.io/badge/R8%20release-%7E2.69%20MB-FF8A00" alt="R8 release about 2.69 MB" />
   <img src="https://img.shields.io/badge/license-MIT-22C55E" alt="MIT License" />
 </p>
 
 > ⚡ 用更小的安装包，完成链接识别、解析、预览与下载。
 
-即取是一款 Android Compose 应用，面向常见短视频、图集与实况链接提供无水印解析和下载体验。R8 优化后的 release APK 约 **2.7 MB**，保留完整的解析、历史记录、主题与下载能力。
+即取是一款 Android Compose 应用，面向常见短视频、图集与实况链接提供无水印解析和下载体验。R8 优化后的 release APK 约 **2.69 MB**，保留完整的解析、历史记录、主题与下载能力。
 
 ## ✨ 特性
 
