@@ -2,6 +2,19 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 的记录方式。
 
+## [1.5.3] - 2026-07-30
+
+### Added
+
+- 启动时自动检查 GitHub 正式 Release，并提供设置页手动检查入口。
+- 检测到新版本时展示更新说明和 APK 大小，可选择 GitHub 或蓝奏云更新来源。
+- R8 优化 Release APK，约 2.71 MB。
+
+### Security
+
+- 更新检查仅接受 `dhvbjvvb/jiqu` 的正式 Release 与 `github.com` 官方 APK 资产地址。
+- Release 签名迁移至专用密钥，并保留旧 GitHub Release 的 v3 证书轮换链。
+
 ## [1.5.2] - 2026-07-30
 
 ### Changed
