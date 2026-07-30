@@ -54,6 +54,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Analytics
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.ChevronLeft
 import androidx.compose.material.icons.outlined.Delete
@@ -91,6 +92,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Checkbox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -275,8 +277,12 @@ private fun JinanMediaApp(
         AppUpdateDialog(
             update = update,
             onDismiss = updateViewModel::dismissUpdate,
-            onUpdate = {
+            onGitHubUpdate = {
                 context.openExternalUrl(update.downloadUrl)
+                updateViewModel.dismissUpdate()
+            },
+            onLanzouUpdate = {
+                context.openExternalUrl(LANZOU_UPDATE_URL)
                 updateViewModel.dismissUpdate()
             }
         )
@@ -287,7 +293,8 @@ private fun JinanMediaApp(
 private fun AppUpdateDialog(
     update: AppUpdate,
     onDismiss: () -> Unit,
-    onUpdate: () -> Unit
+    onGitHubUpdate: () -> Unit,
+    onLanzouUpdate: () -> Unit
 ) {
     Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -321,26 +328,31 @@ private fun AppUpdateDialog(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Button(
-                        onClick = onDismiss,
-                        modifier = Modifier.weight(1f),
-                        shape = SmallShape,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    ) {
-                        Text("稍后再说")
-                    }
-                    Button(
-                        onClick = onUpdate,
+                        onClick = onGitHubUpdate,
                         modifier = Modifier.weight(1f),
                         shape = SmallShape,
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                     ) {
                         Icon(Icons.Outlined.SystemUpdate, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
-                        Text("立即更新")
+                        Text("GitHub")
                     }
+                    Button(
+                        onClick = onLanzouUpdate,
+                        modifier = Modifier.weight(1f),
+                        shape = SmallShape,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    ) {
+                        Icon(Icons.Outlined.CloudDownload, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("蓝奏云")
+                    }
+                }
+                TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
+                    Text("稍后再说")
                 }
             }
         }
@@ -1776,6 +1788,7 @@ private fun Context.openExternalUrl(url: String) {
 }
 
 private const val OPEN_SOURCE_URL = "https://github.com/dhvbjvvb/jiqu"
+private const val LANZOU_UPDATE_URL = "https://wwbjl.lanzout.com/b01d74gqdc"
 
 @Composable
 private fun HistoryPage(
