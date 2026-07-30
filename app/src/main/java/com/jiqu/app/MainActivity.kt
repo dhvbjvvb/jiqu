@@ -2,6 +2,7 @@ package com.jiqu.app
 
 import android.app.Activity
 import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
@@ -282,6 +283,7 @@ private fun JinanMediaApp(
                 updateViewModel.dismissUpdate()
             },
             onLanzouUpdate = {
+                context.copyLanzouExtractCode()
                 context.openExternalUrl(LANZOU_UPDATE_URL)
                 updateViewModel.dismissUpdate()
             }
@@ -312,6 +314,11 @@ private fun AppUpdateDialog(
                     color = MaterialTheme.colorScheme.primary,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "点击蓝奏云后，提取码会自动复制到剪贴板：$LANZOU_EXTRACT_CODE",
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.bodyMedium
                 )
                 if (update.releaseNotes.isNotBlank()) {
                     Text(
@@ -1787,8 +1794,16 @@ private fun Context.openExternalUrl(url: String) {
     startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
 }
 
+private fun Context.copyLanzouExtractCode() {
+    getSystemService(ClipboardManager::class.java)?.setPrimaryClip(
+        ClipData.newPlainText("蓝奏云提取码", LANZOU_EXTRACT_CODE)
+    )
+    Toast.makeText(this, "蓝奏云提取码已复制：$LANZOU_EXTRACT_CODE", Toast.LENGTH_SHORT).show()
+}
+
 private const val OPEN_SOURCE_URL = "https://github.com/dhvbjvvb/jiqu"
 private const val LANZOU_UPDATE_URL = "https://wwbjl.lanzout.com/b01d74gqdc"
+private const val LANZOU_EXTRACT_CODE = "3nwk"
 
 @Composable
 private fun HistoryPage(

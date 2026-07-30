@@ -6,7 +6,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Android-12%2B-3DDC84?logo=android&logoColor=white" alt="Android 12+" />
-  <img src="https://img.shields.io/badge/version-1.5.3-2EA7E0" alt="Version 1.5.3" />
+  <img src="https://img.shields.io/badge/version-1.5.4-2EA7E0" alt="Version 1.5.4" />
   <img src="https://img.shields.io/badge/R8%20release-%7E2.71%20MB-FF8A00" alt="R8 release about 2.71 MB" />
   <img src="https://img.shields.io/badge/license-MIT-22C55E" alt="MIT License" />
 </p>
