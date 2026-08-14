@@ -25,15 +25,46 @@ internal data class SupportedLink(
 internal object PlatformDetector {
     private val supportedPlatforms = listOf(
         SupportedPlatform("bilibili", "哔哩哔哩", setOf("bilibili.com", "b23.tv")),
+        SupportedPlatform("qishui_music", "汽水音乐", setOf("qishui.douyin.com", "music.douyin.com")),
         SupportedPlatform("douyin", "抖音", setOf("douyin.com", "iesdouyin.com")),
         SupportedPlatform("kuaishou", "快手", setOf("kuaishou.com", "kwai.com")),
         SupportedPlatform("pipixia", "皮皮虾", setOf("pipix.com", "pipixia.com")),
         SupportedPlatform("pipigx", "皮皮搞笑", setOf("pipigx.com", "ippzone.com")),
         SupportedPlatform("toutiao", "今日头条", setOf("toutiao.com")),
+        SupportedPlatform("oasis", "绿洲", setOf("oasis.weibo.com", "oasis.weibo.cn")),
         SupportedPlatform("weibo", "微博", setOf("weibo.com", "weibo.cn", "t.cn")),
         SupportedPlatform("wxsph", "微信视频号", setOf("channels.weixin.qq.com", "weixin.qq.com")),
         SupportedPlatform("xiaohongshu", "小红书", setOf("xiaohongshu.com", "xhslink.com", "xhslink.cn", "xhs.com")),
-        SupportedPlatform("zuiyou", "最右", setOf("izuiyou.com", "xiaochuankeji.cn"))
+        SupportedPlatform("zuiyou", "最右", setOf("izuiyou.com", "xiaochuankeji.cn")),
+        SupportedPlatform("youtube", "YouTube", setOf("youtube.com", "youtu.be")),
+        SupportedPlatform("tiktok", "TikTok", setOf("tiktok.com")),
+        SupportedPlatform("xigua", "西瓜视频", setOf("ixigua.com")),
+        SupportedPlatform("haokan", "好看视频", setOf("haokan.baidu.com")),
+        SupportedPlatform("weishi", "微视", setOf("weishi.qq.com")),
+        SupportedPlatform("pearvideo", "梨视频", setOf("pearvideo.com")),
+        SupportedPlatform("acfun", "AcFun", setOf("acfun.cn")),
+        SupportedPlatform("zhihu", "知乎", setOf("zhihu.com")),
+        SupportedPlatform("meipai", "美拍", setOf("meipai.com")),
+        SupportedPlatform("quanmin", "全民", setOf("quanmin.baidu.com", "kg.qq.com")),
+        SupportedPlatform("huya", "虎牙", setOf("huya.com")),
+        SupportedPlatform("twitter", "推特", setOf("twitter.com", "x.com")),
+        SupportedPlatform("instagram", "Instagram", setOf("instagram.com")),
+        SupportedPlatform("doubao", "豆包", setOf("doubao.com")),
+        SupportedPlatform("jimeng", "即梦 AI", setOf("jimeng.jianying.com", "jimeng.com")),
+        SupportedPlatform("netease_music", "网易云音乐", setOf("music.163.com", "y.music.163.com")),
+        SupportedPlatform("huoshan", "火山视频", setOf("huoshan.com")),
+        SupportedPlatform("momo", "陌陌", setOf("immomo.com")),
+        SupportedPlatform("xiaokaxiu", "小咖秀", setOf("xiaokaxiu.com")),
+        SupportedPlatform("kaiyan", "开眼", setOf("kaiyanapp.com")),
+        SupportedPlatform("miaopai", "秒拍", setOf("miaopai.com")),
+        SupportedPlatform("facebook", "Facebook", setOf("facebook.com", "fb.watch")),
+        SupportedPlatform("vimeo", "Vimeo", setOf("vimeo.com")),
+        SupportedPlatform("tumblr", "Tumblr", setOf("tumblr.com"))
+    )
+
+    private val displayedPlatformIds = listOf(
+        "bilibili", "douyin", "kuaishou", "pipixia", "pipigx",
+        "toutiao", "weibo", "wxsph", "xiaohongshu", "zuiyou"
     )
 
     private val urlPattern = Regex("https?://[^\\s\\u3000]+", RegexOption.IGNORE_CASE)
@@ -52,7 +83,9 @@ internal object PlatformDetector {
 
     fun extractUrl(input: String): String? = findSupportedLink(input)?.url
 
-    fun supportedPlatformList(): List<SupportedPlatform> = supportedPlatforms
+    fun supportedPlatformList(): List<SupportedPlatform> = displayedPlatformIds.mapNotNull { platformId ->
+        supportedPlatforms.firstOrNull { it.id == platformId }
+    }
 }
 
 internal data class ParsedDownload(
@@ -182,15 +215,36 @@ internal sealed interface ParseResult {
     data class Failure(val message: String) : ParseResult
 }
 
-internal class BugPkApiClient {
+internal fun apiFailureMessage(
+    message: String?,
+    error: String?,
+    fallback: String = "解析服务暂时不可用"
+): String =
+    listOf(message, error)
+        .asSequence()
+        .map { it.orEmpty() }
+        .firstOrNull(String::isNotBlank)
+        ?: fallback
+
+internal class BugPkApiClient(
+    private val apiKey: String = BuildConfig.BUGPK_API_KEY
+) {
     fun parse(sharedText: String): ParseResult {
         val supportedLink = PlatformDetector.findSupportedLink(sharedText)
             ?: return ParseResult.Failure("仅支持哔哩哔哩、抖音、快手、皮皮虾、皮皮搞笑、今日头条、微博、微信视频号、小红书和最右链接")
+        if (apiKey.isBlank()) {
+            return ParseResult.Failure("解析服务未配置 API Key")
+        }
 
         return runCatching {
-            val root = requestWithRetry(supportedLink.url, supportedLink.platform.id)
+            val root = requestWithRetry(supportedLink.url)
             if (root.optInt("code", 0) != 200) {
-                return ParseResult.Failure(root.optString("msg", "解析服务暂时不可用"))
+                return ParseResult.Failure(
+                    apiFailureMessage(
+                        message = root.optString("msg").ifBlank { root.optString("message") },
+                        error = root.optString("error")
+                    )
+                )
             }
 
             val data = root.optJSONObject("data")
@@ -239,13 +293,13 @@ internal class BugPkApiClient {
         }
     }
 
-    private fun requestWithRetry(sharedUrl: String, platformId: String): JSONObject {
+    private fun requestWithRetry(sharedUrl: String): JSONObject {
         var lastResponse: JSONObject? = null
         var lastError: Throwable? = null
 
         repeat(PARSE_REQUEST_ATTEMPTS) { attempt ->
             try {
-                val response = JSONObject(request(sharedUrl, platformId))
+                val response = JSONObject(request(sharedUrl))
                 lastResponse = response
                 if (response.optInt("code", 0) == 200 && response.optJSONObject("data") != null) {
                     return response
@@ -265,14 +319,15 @@ internal class BugPkApiClient {
         )
     }
 
-    private fun request(sharedUrl: String, platformId: String): String {
-        val query = "url=${URLEncoder.encode(sharedUrl, StandardCharsets.UTF_8.name())}&platform=$platformId"
-        val connection = (java.net.URL("https://api.bugpk.com/api/short_videos?$query").openConnection() as HttpURLConnection).apply {
+    private fun request(sharedUrl: String): String {
+        val query = "url=${URLEncoder.encode(sharedUrl, StandardCharsets.UTF_8.name())}"
+        val connection = (java.net.URL("$BUGPK_API_URL?$query").openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = CONNECT_TIMEOUT_MILLIS
             readTimeout = READ_TIMEOUT_MILLIS
             setRequestProperty("Accept", "application/json")
             setRequestProperty("User-Agent", "Jiqu-Android/1.0")
+            setRequestProperty("X-API-Key", apiKey)
         }
         return try {
             val stream = if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream
@@ -514,6 +569,7 @@ internal class BugPkApiClient {
         BufferedReader(InputStreamReader(this, StandardCharsets.UTF_8)).use { it.readText() }
 
     private companion object {
+        const val BUGPK_API_URL = "https://api-new.ifphp.com/api/svparse"
         const val CONNECT_TIMEOUT_MILLIS = 15_000
         const val READ_TIMEOUT_MILLIS = 30_000
         const val PARSE_REQUEST_ATTEMPTS = 3

@@ -6,7 +6,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Android-12%2B-3DDC84?logo=android&logoColor=white" alt="Android 12+" />
-  <img src="https://img.shields.io/badge/version-1.5.6-2EA7E0" alt="Version 1.5.6" />
+  <img src="https://img.shields.io/badge/version-1.5.7-2EA7E0" alt="Version 1.5.7" />
   <img src="https://img.shields.io/badge/R8%20release-%7E2.71%20MB-FF8A00" alt="R8 release about 2.71 MB" />
   <img src="https://img.shields.io/badge/license-MIT-22C55E" alt="MIT License" />
 </p>
@@ -53,6 +53,9 @@
 ### 命令
 
 ```powershell
+# Configure the local-only API key before building.
+# The key is read from local.properties (bugpkApiKey) or BUGPK_API_KEY.
+
 # Debug APK
 .\gradlew.bat assembleDebug
 
@@ -71,6 +74,8 @@ app/build/outputs/apk/release/app-release-unsigned.apk
 ```
 
 > 发布前请使用自己的 release keystore 对 release APK 签名，切勿提交 keystore、`local.properties` 或构建产物。
+
+解析服务使用 `https://api-new.ifphp.com/api/svparse`，通过 `X-API-Key` Header 认证。API Key 仅应放在本机的 `local.properties` 或构建环境变量中，不要提交到仓库。
 
 ## 🧱 项目结构
 

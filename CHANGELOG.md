@@ -2,6 +2,13 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 的记录方式。
 
+## [1.5.7] - 2026-08-15
+
+### Added
+
+- 扩展短视频链接内部平台识别范围，同时保留原有十个平台展示列表。
+- 切换短视频聚合接口至新 API Endpoint 并接入 API Key Header 认证。
+
 ## [1.5.6] - 2026-07-30
 
 ### Fixed

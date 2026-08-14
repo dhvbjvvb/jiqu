@@ -1,6 +1,15 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+}
+
+val localProperties = Properties().apply {
+    rootProject.file("local.properties")
+        .takeIf { it.isFile }
+        ?.inputStream()
+        ?.use { load(it) }
 }
 
 android {
@@ -15,8 +24,19 @@ android {
         applicationId = "com.jiqu.app"
         minSdk = 31
         targetSdk = 36
-        versionCode = 1506
-        versionName = "1.5.6"
+        versionCode = 1507
+        versionName = "1.5.7"
+
+        val configuredBugpkApiKey = providers.gradleProperty("bugpkApiKey")
+            .orElse(providers.environmentVariable("BUGPK_API_KEY"))
+            .orElse(localProperties.getProperty("bugpkApiKey").orEmpty())
+            .orElse("")
+            .map { it.trim() }
+            .get()
+        val escapedBugpkApiKey = configuredBugpkApiKey
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+        buildConfigField("String", "BUGPK_API_KEY", "\"$escapedBugpkApiKey\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -28,8 +28,13 @@ class PlatformDetectorTest {
     }
 
     @Test
-    fun rejectsUnsupportedPlatform() {
-        assertNull(PlatformDetector.findSupportedPlatform("https://www.youtube.com/watch?v=example"))
+    fun detectsExtendedPlatformWithoutChangingDisplayedList() {
+        assertEquals("youtube", PlatformDetector.findSupportedPlatform("https://www.youtube.com/watch?v=example").orEmptyId())
+        assertEquals("instagram", PlatformDetector.findSupportedPlatform("https://www.instagram.com/reel/example").orEmptyId())
+        assertEquals("oasis", PlatformDetector.findSupportedPlatform("https://oasis.weibo.cn/example").orEmptyId())
+        assertEquals("qishui_music", PlatformDetector.findSupportedPlatform("https://qishui.douyin.com/video/example").orEmptyId())
+        assertEquals(10, PlatformDetector.supportedPlatformList().size)
+        assertNull(PlatformDetector.supportedPlatformList().firstOrNull { it.id == "youtube" })
     }
 
     @Test
