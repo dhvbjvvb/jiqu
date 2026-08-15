@@ -3,6 +3,8 @@ package com.jiqu.app
 import android.app.Application
 import android.content.Context
 import android.os.Looper
+import android.os.SystemClock
+import android.util.Log
 import androidx.core.content.edit
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -68,6 +70,7 @@ internal data class DownloadTaskUiState(
 internal class ParserViewModel(application: Application) : AndroidViewModel(application) {
     private val preferences = application.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
     private val apiClient = BugPkApiClient()
+    private val parsedMediaCache = ParsedMediaCache()
 
     var linkText by mutableStateOf("")
         private set
@@ -96,26 +99,39 @@ internal class ParserViewModel(application: Application) : AndroidViewModel(appl
     fun parseCurrent(): Boolean {
         if (linkText.isBlank() || isParsing) return false
         val sharedText = linkText
+        val sourceUrl = PlatformDetector.extractUrl(sharedText)
+        val startedAtMillis = SystemClock.elapsedRealtime()
         isParsing = true
         result = null
         viewModelScope.launch {
-            val parseResult = withContext(Dispatchers.IO) { apiClient.parse(sharedText) }
-            completeParsing(parseResult)
-            if (parseResult is ParseResult.Success && parseResult.media.mediaType == "视频") {
-                val resolvedDownloads = withContext(Dispatchers.IO) {
-                    resolveVideoDownloads(parseResult.media.videoDownloads)
-                }
-                if (result === parseResult) {
-                    result = ParseResult.Success(
-                        parseResult.media.copy(
-                            videoDownloads = resolvedDownloads,
-                            previewUrl = selectPreviewVideoUrl(parseResult.media.previewUrl, resolvedDownloads)
-                        )
-                    )
-                }
+            val cachedMedia = sourceUrl?.let(parsedMediaCache::get)
+            if (cachedMedia != null) {
+                logParseDuration("cache", startedAtMillis, succeeded = true)
+                completeParsing(ParseResult.Success(cachedMedia))
+                return@launch
             }
+            val parseResult = withContext(Dispatchers.IO) { apiClient.parse(sharedText) }
+            if (parseResult is ParseResult.Success) parsedMediaCache.put(parseResult.media)
+            logParseDuration("network", startedAtMillis, parseResult is ParseResult.Success)
+            completeParsing(parseResult)
         }
         return true
+    }
+
+    fun updateVideoMetadata(downloadUrl: String, metadata: VideoTechnicalMetadata) {
+        val successfulResult = result as? ParseResult.Success ?: return
+        var wasUpdated = false
+        val updatedDownloads = successfulResult.media.videoDownloads.map { download ->
+            if (download.url != downloadUrl) return@map download
+            applyVideoTechnicalMetadata(download, metadata).also { updatedDownload ->
+                wasUpdated = wasUpdated || updatedDownload != download
+            }
+        }
+        if (!wasUpdated) return
+
+        val updatedMedia = successfulResult.media.copy(videoDownloads = updatedDownloads)
+        result = ParseResult.Success(updatedMedia)
+        parsedMediaCache.put(updatedMedia)
     }
 
     fun reparse(entry: ParseHistoryEntry): Boolean {
@@ -354,6 +370,14 @@ internal class ParserViewModel(application: Application) : AndroidViewModel(appl
     private fun formatHistoryTimestamp(): String =
         SimpleDateFormat(HISTORY_TIMESTAMP_PATTERN, Locale.getDefault()).format(Date())
 
+    private fun logParseDuration(source: String, startedAtMillis: Long, succeeded: Boolean) {
+        Log.d(
+            PERFORMANCE_LOG_TAG,
+            "parse_${if (succeeded) "success" else "failure"} source=$source " +
+                "elapsedMs=${SystemClock.elapsedRealtime() - startedAtMillis}"
+        )
+    }
+
     private companion object {
         const val PREFERENCES_NAME = "parser_preferences"
         const val AUTO_DETECT_KEY = "auto_detect"
@@ -362,5 +386,6 @@ internal class ParserViewModel(application: Application) : AndroidViewModel(appl
         const val HISTORY_KEY = "parse_history"
         const val MAX_HISTORY_ENTRIES = 50
         const val HISTORY_TIMESTAMP_PATTERN = "MM-dd HH:mm"
+        const val PERFORMANCE_LOG_TAG = "JiquPerformance"
     }
 }

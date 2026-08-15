@@ -1,5 +1,7 @@
 package com.jiqu.app
 
+import android.os.SystemClock
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
@@ -9,7 +11,6 @@ import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
-import java.util.Locale
 
 internal data class SupportedPlatform(
     val id: String,
@@ -95,7 +96,9 @@ internal data class ParsedDownload(
     val height: Int? = null,
     val codec: String? = null,
     val bitRate: Long? = null,
-    val hasAudio: Boolean? = null
+    val hasAudio: Boolean? = null,
+    val frameRate: Float? = null,
+    val isOriginal: Boolean = false
 )
 
 internal data class ParsedGalleryItem(
@@ -237,7 +240,12 @@ internal class BugPkApiClient(
         }
 
         return runCatching {
+            val apiRequestStartedAtMillis = SystemClock.elapsedRealtime()
             val root = requestWithRetry(supportedLink.url)
+            Log.d(
+                PERFORMANCE_LOG_TAG,
+                "api_response elapsedMs=${SystemClock.elapsedRealtime() - apiRequestStartedAtMillis}"
+            )
             if (root.optInt("code", 0) != 200) {
                 return ParseResult.Failure(
                     apiFailureMessage(
@@ -255,12 +263,20 @@ internal class BugPkApiClient(
             if (videoDownloads.isEmpty()) {
                 return ParseResult.Failure("未获取到可下载的媒体地址")
             }
+            val directPreviewUrl = data.optString("type", "video").takeIf { it == "video" }?.let {
+                data.optString("url").takeIf { url -> url.isHttpUrl() }?.let { url ->
+                    normalizeVideoUrlForPlayback(url, supportedLink.platform.id)
+                }
+            }
             val title = data.firstNonBlank("title", "desc", "description") ?: "未命名媒体"
             val apiDescription = data.firstNonBlank("desc", "description", "title") ?: title
-            val description = if (supportedLink.platform.id == DOUYIN_PLATFORM_ID) {
+            val description = if (
+                supportedLink.platform.id == DOUYIN_PLATFORM_ID &&
+                shouldFetchCompleteDouyinDescription(apiDescription)
+            ) {
                 fetchDouyinDescription(supportedLink.url) ?: sanitizeDescription(apiDescription)
             } else {
-                apiDescription
+                sanitizeDescription(apiDescription)
             }
 
             ParseResult.Success(
@@ -274,13 +290,9 @@ internal class BugPkApiClient(
                         fields = data.toCoverFieldMap()
                     ),
                     mediaType = data.optString("type", "video").toDisplayName(),
-                    previewUrl = data.optString("type", "video").takeIf { it == "video" }?.let {
-                        data.optString("url").takeIf { url -> url.isHttpUrl() }?.let { url ->
-                            normalizeVideoUrlForPlayback(url, supportedLink.platform.id)
-                        }
-                            ?: videoDownloads.firstOrNull { download -> download.label.contains("视频") }?.url
-                            ?: videoDownloads.firstOrNull()?.url
-                    },
+                    previewUrl = directPreviewUrl?.let { selectPreviewVideoUrl(it, videoDownloads) }
+                        ?: videoDownloads.firstOrNull { download -> download.label.contains("视频") }?.url
+                        ?: videoDownloads.firstOrNull()?.url,
                     videoDownloads = videoDownloads,
                     galleryItems = galleryItems,
                     music = data.optJSONObject("music")?.optString("url")
@@ -371,9 +383,13 @@ internal class BugPkApiClient(
                     ?.takeIf { it.isHttpUrl() }
                     ?.let {
                     val playableUrl = normalizeVideoUrlForPlayback(it, platformId)
-                    downloads[playableUrl] = ParsedDownload(ORIGINAL_QUALITY_LABEL, playableUrl)
+                    downloads[playableUrl] = ParsedDownload(
+                        label = ORIGINAL_METADATA_PENDING_LABEL,
+                        url = playableUrl,
+                        isOriginal = true
+                    )
                 }
-                collectPlayableVideoUrls(data.opt("videos"), ORIGINAL_QUALITY_LABEL, platformId, downloads)
+                collectPlayableVideoUrls(data.opt("videos"), VIDEO_METADATA_PENDING_LABEL, platformId, downloads)
                 collectPlayableVideoUrls(data.opt("video_backup"), "备用清晰度", platformId, downloads)
             }
         }
@@ -480,13 +496,18 @@ internal class BugPkApiClient(
                 val height = value.optInt("height").takeIf { it > 0 }
                 val codec = value.optString("codec").trim().takeIf { it.isNotEmpty() }
                 val bitRate = value.optLong("bit_rate").takeIf { it > 0 }
+                val frameRate = value.firstPositiveFloat("fps", "frame_rate", "frameRate")
                 value.optString("url").takeIf { it.isHttpUrl() }?.let { url ->
                     val playableUrl = normalizeVideoUrlForPlayback(url, platformId)
-                    downloads[playableUrl] = ParsedDownload(label, playableUrl, width, height, codec, bitRate)
+                    downloads.putVideoDownload(
+                        ParsedDownload(label, playableUrl, width, height, codec, bitRate, frameRate = frameRate)
+                    )
                 }
                 value.optString("video").takeIf { it.isHttpUrl() }?.let { url ->
                     val playableUrl = normalizeVideoUrlForPlayback(url, platformId)
-                    downloads[playableUrl] = ParsedDownload(label, playableUrl, width, height, codec, bitRate)
+                    downloads.putVideoDownload(
+                        ParsedDownload(label, playableUrl, width, height, codec, bitRate, frameRate = frameRate)
+                    )
                 }
                 value.keys().forEach { key ->
                     if (key !in mediaKeys) collectPlayableVideoUrls(value.opt(key), key, platformId, downloads)
@@ -494,7 +515,7 @@ internal class BugPkApiClient(
             }
             is String -> value.takeIf { it.isHttpUrl() }?.let { url ->
                 val playableUrl = normalizeVideoUrlForPlayback(url, platformId)
-                downloads[playableUrl] = ParsedDownload(defaultLabel, playableUrl)
+                downloads.putVideoDownload(ParsedDownload(defaultLabel, playableUrl))
             }
         }
     }
@@ -538,19 +559,37 @@ internal class BugPkApiClient(
     private fun JSONObject.firstNonBlank(vararg keys: String): String? =
         keys.asSequence().map { optString(it).trim() }.firstOrNull { it.isNotEmpty() }
 
+    private fun JSONObject.firstPositiveFloat(vararg keys: String): Float? =
+        keys.asSequence()
+            .map { optDouble(it, Double.NaN) }
+            .firstOrNull { it.isFinite() && it > 0.0 }
+            ?.toFloat()
+
+    private fun MutableMap<String, ParsedDownload>.putVideoDownload(download: ParsedDownload) {
+        this[download.url] = mergeVideoDownload(this[download.url], download)
+    }
+
     private fun formatVideoDownloadLabel(value: JSONObject, defaultLabel: String): String {
         val quality = value.firstNonBlank("quality")
         val width = value.optInt("width").takeIf { it > 0 }
         val height = value.optInt("height").takeIf { it > 0 }
-        val resolution = quality ?: videoQualityLabel(width, height)
-        val codec = value.optString("codec").trim().takeIf { it.isNotEmpty() }?.uppercase()
+        val codec = value.optString("codec").trim().takeIf { it.isNotEmpty() }
         val bitRate = value.optLong("bit_rate")
             .takeIf { it > 0 }
-            ?.let { "${(it / 1_000f).formatOneDecimal()} Mbps" }
-        return listOfNotNull(resolution, codec, bitRate).joinToString(" · ").ifBlank { defaultLabel }
+        val frameRate = value.firstPositiveFloat("fps", "frame_rate", "frameRate")
+        return videoDownloadLabel(
+            download = ParsedDownload(
+                label = quality ?: defaultLabel,
+                url = "",
+                width = width,
+                height = height,
+                codec = codec,
+                bitRate = bitRate,
+                frameRate = frameRate
+            ),
+            fallbackLabel = quality ?: defaultLabel
+        )
     }
-
-    private fun Float.formatOneDecimal(): String = "%.1f".format(Locale.US, this)
 
     private fun String.isDynamicLivePhotoFormat(): Boolean = lowercase() in DYNAMIC_LIVE_PHOTO_FORMATS
 
@@ -599,6 +638,9 @@ internal fun extractDouyinDescription(pageHtml: String): String? {
 
 internal fun sanitizeDescription(description: String): String =
     description.replace(DOUYIN_TRUNCATION_NOTICE_PATTERN, "").trim()
+
+internal fun shouldFetchCompleteDouyinDescription(description: String): Boolean =
+    DOUYIN_TRUNCATION_NOTICE_PATTERN.containsMatchIn(description)
 
 private fun findJsonStringEnd(source: String, startIndex: Int): Int {
     var isEscaped = false
@@ -668,3 +710,4 @@ private val COVER_URL_KEYS = listOf(
 )
 private val COVER_FALLBACK_KEYS = listOf("images", "image_list", "image_urls", "pictures")
 private val COVER_OBJECT_URL_KEYS = listOf("url", "image", "src", "uri", "url_list", "urlList")
+private const val PERFORMANCE_LOG_TAG = "JiquPerformance"

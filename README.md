@@ -6,21 +6,22 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Android-12%2B-3DDC84?logo=android&logoColor=white" alt="Android 12+" />
-  <img src="https://img.shields.io/badge/version-1.5.7-2EA7E0" alt="Version 1.5.7" />
-  <img src="https://img.shields.io/badge/R8%20release-%7E2.71%20MB-FF8A00" alt="R8 release about 2.71 MB" />
+  <img src="https://img.shields.io/badge/version-1.5.8-2EA7E0" alt="Version 1.5.8" />
+  <img src="https://img.shields.io/badge/R8%20release-%7E3.65%20MiB-FF8A00" alt="R8 release about 3.65 MiB" />
   <img src="https://img.shields.io/badge/license-MIT-22C55E" alt="MIT License" />
 </p>
 
 > ⚡ 用更小的安装包，完成链接识别、解析、预览与下载。
 
-即取是一款 Android Compose 应用，面向常见短视频、图集与实况链接提供无水印解析和下载体验。R8 优化后的 release APK 约 **2.69 MB**，保留完整的解析、历史记录、主题与下载能力。
+即取是一款 Android Compose 应用，面向常见短视频、图集与实况链接提供无水印解析和下载体验。R8 优化后的 release APK 约 **3.65 MiB**，保留完整的解析、预览、历史记录、主题与下载能力。
 
 ## ✨ 特性
 
 - 🌐 **十个平台支持**：哔哩哔哩、抖音、快手、皮皮虾、皮皮搞笑、今日头条、微博、微信视频号、小红书、最右。
 - 🔗 **智能链接处理**：可自动识别分享文本中的链接，也可自动读取剪贴板中的受支持链接。
 - 🎬 **多媒体解析**：支持视频、图集、实况和背景音乐；图集可左右滑动预览并选择下载内容。
-- 🎞️ **清晰度选择**：展示可用 MP4 清晰度，过滤不适合直接下载的 DASH 资源。
+- 🎞️ **实际视频参数**：展示分辨率、编码、帧率和码率，并过滤不适合直接下载的无声资源。
+- ▶️ **快速视频预览**：使用 Media3 播放器、备用源回退和本地缓存，缩短首帧等待时间。
 - ⚡ **并行分段下载**：支持最多 20 路并发分段下载，并在服务端不支持分段时自动回退至单连接下载。
 - 🖼️ **可靠历史记录**：保留最新解析结果与封面，重复链接不会产生多条历史记录。
 - 🌗 **主题适配**：跟随系统、浅色和深色三种模式。

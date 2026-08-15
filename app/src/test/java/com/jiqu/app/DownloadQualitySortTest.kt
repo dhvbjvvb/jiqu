@@ -5,16 +5,27 @@ import org.junit.Test
 
 class DownloadQualitySortTest {
     @Test
-    fun putsOriginalQualityFirstThenSortsByResolutionDescending() {
+    fun putsOriginalVideoFirstAfterItsLabelContainsTechnicalMetadata() {
         val downloads = listOf(
-            ParsedDownload("720p", "https://example.com/720.mp4"),
-            ParsedDownload("原始清晰度", "https://example.com/original.mp4"),
-            ParsedDownload("1440p", "https://example.com/1440.mp4"),
-            ParsedDownload("1080p", "https://example.com/1080.mp4")
+            ParsedDownload("720P · H.264", "https://example.com/720.mp4", width = 1280, height = 720),
+            ParsedDownload(
+                "1080P · H.265 · 30fps",
+                "https://example.com/original.mp4",
+                width = 1920,
+                height = 1080,
+                isOriginal = true
+            ),
+            ParsedDownload("1440P · H.265", "https://example.com/1440.mp4", width = 2560, height = 1440),
+            ParsedDownload("1080P · H.264", "https://example.com/1080.mp4", width = 1920, height = 1080)
         )
 
         assertEquals(
-            listOf("原始清晰度", "1440p", "1080p", "720p"),
+            listOf(
+                "1080P · H.265 · 30fps",
+                "1440P · H.265",
+                "1080P · H.264",
+                "720P · H.264"
+            ),
             sortDownloadQualities(downloads).map { it.label }
         )
     }

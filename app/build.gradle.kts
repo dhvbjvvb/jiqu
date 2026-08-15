@@ -24,8 +24,8 @@ android {
         applicationId = "com.jiqu.app"
         minSdk = 31
         targetSdk = 36
-        versionCode = 1507
-        versionName = "1.5.7"
+        versionCode = 1508
+        versionName = "1.5.8"
 
         val configuredBugpkApiKey = providers.gradleProperty("bugpkApiKey")
             .orElse(providers.environmentVariable("BUGPK_API_KEY"))
@@ -70,6 +70,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.media3.exoplayer)
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

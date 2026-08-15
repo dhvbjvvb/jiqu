@@ -8,7 +8,6 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
-import android.graphics.SurfaceTexture
 import android.graphics.BitmapFactory
 import android.media.MediaPlayer
 import android.media.MediaMetadataRetriever
@@ -16,8 +15,9 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.MediaStore
-import android.view.Surface
+import android.util.Log
 import android.view.TextureView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -80,6 +80,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -101,7 +102,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -134,12 +137,16 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.FileOutputStream
@@ -190,6 +197,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            warmPreviewVideoCache(applicationContext)
             cleanupStaleDownloadTemporaryFiles(applicationContext)
         }
         enableEdgeToEdge()
@@ -504,6 +512,7 @@ private fun ParsePage(
                         media = result.media,
                         music = result.media.music,
                         previewSessionKey = previewSessionKey,
+                        onVideoMetadataResolved = parserViewModel::updateVideoMetadata,
                         onDownload = { downloads, mediaSequenceNumbers ->
                             onDownloads(result.media.title, downloads, mediaSequenceNumbers)
                         }
@@ -524,6 +533,7 @@ private fun ParsedMediaResult(
     media: ParsedMedia,
     music: ParsedDownload?,
     previewSessionKey: Int,
+    onVideoMetadataResolved: (String, VideoTechnicalMetadata) -> Unit,
     onDownload: (List<ParsedDownload>, Map<String, Int>) -> Unit
 ) {
     var isQualitySheetVisible by remember { mutableStateOf(false) }
@@ -555,6 +565,7 @@ private fun ParsedMediaResult(
             previewSessionKey = previewSessionKey,
             galleryItems = galleryItems,
             selectedDownloadUrls = selectedDownloadUrls,
+            onVideoMetadataResolved = onVideoMetadataResolved,
             onSelectionChange = { url ->
                 selectedDownloadUrls = if (url in selectedDownloadUrls) {
                     selectedDownloadUrls - url
@@ -646,6 +657,7 @@ private fun MediaPreview(
     previewSessionKey: Int,
     galleryItems: List<ParsedGalleryItem>,
     selectedDownloadUrls: Set<String>,
+    onVideoMetadataResolved: (String, VideoTechnicalMetadata) -> Unit,
     onSelectionChange: (String) -> Unit
 ) {
     if (galleryItems.isNotEmpty()) {
@@ -656,7 +668,11 @@ private fun MediaPreview(
             onSelectionChange = onSelectionChange
         )
     } else {
-        VideoPreview(media = media, previewSessionKey = previewSessionKey)
+        VideoPreview(
+            media = media,
+            previewSessionKey = previewSessionKey,
+            onVideoMetadataResolved = onVideoMetadataResolved
+        )
     }
 }
 
@@ -826,38 +842,136 @@ private fun downloadSheetTitleFor(mediaType: String): String = when (mediaType) 
 }
 
 @Composable
-private fun VideoPreview(media: ParsedMedia, previewSessionKey: Int) {
+private fun VideoPreview(
+    media: ParsedMedia,
+    previewSessionKey: Int,
+    onVideoMetadataResolved: (String, VideoTechnicalMetadata) -> Unit
+) {
     val context = LocalContext.current
-    var player by remember(media.previewUrl, previewSessionKey) { mutableStateOf<MediaPlayer?>(null) }
-    var videoSurface by remember(media.previewUrl, previewSessionKey) { mutableStateOf<Surface?>(null) }
+    val lifecycleOwner = context.findActivity() as? LifecycleOwner
+    val metadataResolvedCallback by rememberUpdatedState(onVideoMetadataResolved)
+    val previewCandidates = previewCandidateUrls(media.previewUrl, media.videoDownloads)
+    val player = remember(previewCandidates, previewSessionKey) {
+        previewCandidates.firstOrNull()?.let { createPreviewPlayer(context.applicationContext, it) }
+    }
+    var activeCandidateIndex by remember(previewCandidates, previewSessionKey) { mutableIntStateOf(0) }
+    var sourceStartedAtMillis by remember(previewCandidates, previewSessionKey) {
+        mutableLongStateOf(SystemClock.elapsedRealtime())
+    }
+    var hasLoggedReady by remember(previewCandidates, previewSessionKey) { mutableStateOf(false) }
+    var hasLoggedFirstFrame by remember(previewCandidates, previewSessionKey) { mutableStateOf(false) }
     var durationMillis by remember(media.previewUrl, previewSessionKey) { mutableIntStateOf(0) }
     var positionMillis by remember(media.previewUrl, previewSessionKey) { mutableIntStateOf(0) }
     var isPlaying by remember(media.previewUrl, previewSessionKey) { mutableStateOf(false) }
+    var isBuffering by remember(media.previewUrl, previewSessionKey) { mutableStateOf(player != null) }
     var hasRenderedFirstFrame by remember(media.previewUrl, previewSessionKey) { mutableStateOf(false) }
     var previewWidthPx by remember(media.previewUrl, previewSessionKey) { mutableIntStateOf(1) }
+    var videoWidthPx by remember(media.previewUrl, previewSessionKey) { mutableIntStateOf(0) }
+    var videoHeightPx by remember(media.previewUrl, previewSessionKey) { mutableIntStateOf(0) }
     var previewError by remember(media.previewUrl, previewSessionKey) { mutableStateOf<String?>(null) }
 
-    DisposableEffect(player, isPlaying) {
-        val handler = Handler(Looper.getMainLooper())
-        val updateProgress = object : Runnable {
-            override fun run() {
-                player?.let { mediaPlayer ->
-                    if (isMediaPlayerPlaying(mediaPlayer)) {
-                        positionMillis = mediaPlayer.currentPosition.coerceAtLeast(0)
-                        handler.postDelayed(this, PROGRESS_UPDATE_INTERVAL_MILLIS)
+    LaunchedEffect(player, isPlaying) {
+        while (isPlaying) {
+            player?.let { activePlayer ->
+                positionMillis = playbackDurationMillis(activePlayer.currentPosition)
+                durationMillis = playbackDurationMillis(activePlayer.duration)
+            }
+            delay(PROGRESS_UPDATE_INTERVAL_MILLIS)
+        }
+    }
+    DisposableEffect(player, lifecycleOwner) {
+        fun publishVideoMetadata(activePlayer: androidx.media3.exoplayer.ExoPlayer) {
+            val activeUrl = activePlayer.currentMediaItem?.mediaId.orEmpty()
+            if (activeUrl.isBlank()) return
+            extractPlayerVideoMetadata(activePlayer)?.let { metadata ->
+                metadataResolvedCallback(activeUrl, metadata)
+            }
+        }
+
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                val activePlayer = player ?: return
+                durationMillis = playbackDurationMillis(activePlayer.duration)
+                isBuffering = playbackState == Player.STATE_BUFFERING
+                if (playbackState == Player.STATE_READY) {
+                    publishVideoMetadata(activePlayer)
+                    if (!hasLoggedReady) {
+                        Log.d(
+                            PERFORMANCE_LOG_TAG,
+                            "preview_ready candidate=${activeCandidateIndex + 1} " +
+                                "elapsedMs=${SystemClock.elapsedRealtime() - sourceStartedAtMillis}"
+                        )
+                        hasLoggedReady = true
                     }
+                }
+                if (playbackState == Player.STATE_ENDED) {
+                    positionMillis = durationMillis
+                }
+            }
+
+            override fun onIsPlayingChanged(isPlayingNow: Boolean) {
+                isPlaying = isPlayingNow
+            }
+
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                videoWidthPx = videoSize.width
+                videoHeightPx = videoSize.height
+                player?.let(::publishVideoMetadata)
+            }
+
+            override fun onRenderedFirstFrame() {
+                hasRenderedFirstFrame = true
+                if (!hasLoggedFirstFrame) {
+                    Log.d(
+                        PERFORMANCE_LOG_TAG,
+                        "preview_first_frame candidate=${activeCandidateIndex + 1} " +
+                            "elapsedMs=${SystemClock.elapsedRealtime() - sourceStartedAtMillis}"
+                    )
+                    hasLoggedFirstFrame = true
+                }
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                isPlaying = false
+                val nextCandidateIndex = activeCandidateIndex + 1
+                if (nextCandidateIndex < previewCandidates.size) {
+                    activeCandidateIndex = nextCandidateIndex
+                    sourceStartedAtMillis = SystemClock.elapsedRealtime()
+                    hasLoggedReady = false
+                    hasLoggedFirstFrame = false
+                    hasRenderedFirstFrame = false
+                    positionMillis = 0
+                    durationMillis = 0
+                    isBuffering = true
+                    previewError = null
+                    Log.d(
+                        PERFORMANCE_LOG_TAG,
+                        "preview_fallback candidate=${nextCandidateIndex + 1} errorCode=${error.errorCodeName}"
+                    )
+                    player?.let { activePlayer ->
+                        switchPreviewSource(activePlayer, previewCandidates[nextCandidateIndex])
+                    }
+                } else {
+                    isBuffering = false
+                    previewError = "视频预览加载失败，仍可使用下载功能"
                 }
             }
         }
-        if (isPlaying) handler.post(updateProgress)
-        onDispose { handler.removeCallbacksAndMessages(null) }
-    }
-    DisposableEffect(media.previewUrl, previewSessionKey) {
+        val lifecycleObserver = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) player?.pause()
+        }
+        player?.addListener(listener)
+        lifecycleOwner?.lifecycle?.addObserver(lifecycleObserver)
+        player?.let { activePlayer ->
+            isPlaying = activePlayer.isPlaying
+            isBuffering = activePlayer.playbackState == Player.STATE_IDLE ||
+                activePlayer.playbackState == Player.STATE_BUFFERING
+            durationMillis = playbackDurationMillis(activePlayer.duration)
+        }
         onDispose {
+            lifecycleOwner?.lifecycle?.removeObserver(lifecycleObserver)
+            player?.removeListener(listener)
             player?.release()
-            player = null
-            videoSurface?.release()
-            videoSurface = null
         }
     }
 
@@ -874,97 +988,56 @@ private fun VideoPreview(media: ParsedMedia, previewSessionKey: Int) {
                     .onSizeChanged { previewWidthPx = it.width.coerceAtLeast(1) }
                     .pointerInput(player, durationMillis) {
                         detectHorizontalDragGestures(
-                            onDragStart = { positionMillis = player?.currentPosition ?: positionMillis },
+                            onDragStart = {
+                                positionMillis = player?.currentPosition
+                                    ?.let(::playbackDurationMillis)
+                                    ?: positionMillis
+                            },
                             onHorizontalDrag = { _, dragAmount ->
                                 val updatedPosition = (positionMillis + dragAmount / previewWidthPx * durationMillis)
                                     .toInt()
                                     .coerceIn(0, durationMillis)
                                 positionMillis = updatedPosition
-                                player?.seekTo(updatedPosition)
+                                player?.seekTo(updatedPosition.toLong())
                             }
                         )
                     },
                 contentAlignment = Alignment.Center
             ) {
                 key(media.previewUrl, previewSessionKey) {
-                    media.previewUrl?.let { previewUrl ->
+                    player?.let { activePlayer ->
                         AndroidView(
                             factory = {
-                            TextureView(context).also { textureView ->
-                                textureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-                                    override fun onSurfaceTextureAvailable(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
-                                        MediaPlayer().also { mediaPlayer ->
-                                            player?.release()
-                                            player = mediaPlayer
-                                            videoSurface?.release()
-                                            videoSurface = Surface(surfaceTexture)
-                                            val dataSourceResult = runCatching {
-                                                mediaPlayer.setSurface(videoSurface)
-                                                mediaPlayer.setDataSource(context, previewUrl.toUri(), PREVIEW_REQUEST_HEADERS)
-                                            }
-                                            if (dataSourceResult.isFailure) {
-                                                previewError = "视频预览地址不可用，仍可使用下载功能"
-                                                mediaPlayer.release()
-                                                if (player === mediaPlayer) player = null
-                                                return@also
-                                            }
-                                            mediaPlayer.setOnPreparedListener { preparedPlayer ->
-                                                durationMillis = preparedPlayer.duration.coerceAtLeast(0)
-                                                textureView.post {
-                                                    fitTextureToVideo(
-                                                        textureView = textureView,
-                                                        videoWidth = preparedPlayer.videoWidth,
-                                                        videoHeight = preparedPlayer.videoHeight
-                                                    )
-                                                }
-                                                preparedPlayer.start()
-                                                isPlaying = true
-                                                Handler(Looper.getMainLooper()).postDelayed({
-                                                    if (player === preparedPlayer && isMediaPlayerPlaying(preparedPlayer)) {
-                                                        hasRenderedFirstFrame = true
-                                                    }
-                                                }, FIRST_FRAME_FALLBACK_MILLIS)
-                                            }
-                                            mediaPlayer.setOnInfoListener { _, what, _ ->
-                                                if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) hasRenderedFirstFrame = true
-                                                true
-                                            }
-                                            mediaPlayer.setOnCompletionListener {
-                                                isPlaying = false
-                                                positionMillis = durationMillis
-                                            }
-                                            mediaPlayer.setOnErrorListener { _, _, _ ->
-                                                isPlaying = false
-                                                previewError = "视频预览加载失败，仍可使用下载功能"
-                                                true
-                                            }
-                                            runCatching { mediaPlayer.prepareAsync() }.onFailure {
-                                                previewError = "视频预览地址不可用"
-                                            }
-                                        }
-                                    }
-
-                                    override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) = Unit
-
-                                    override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
-                                        player?.release()
-                                        player = null
-                                        videoSurface?.release()
-                                        videoSurface = null
-                                        isPlaying = false
-                                        return true
-                                    }
-
-                                    override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit
+                                TextureView(context).also { textureView ->
+                                    activePlayer.setVideoTextureView(textureView)
+                                    val videoSize = activePlayer.videoSize
+                                    fitTextureToVideo(
+                                        textureView = textureView,
+                                        videoWidth = videoWidthPx.takeIf { it > 0 } ?: videoSize.width,
+                                        videoHeight = videoHeightPx.takeIf { it > 0 } ?: videoSize.height
+                                    )
                                 }
-                            }
-                        },
+                            },
+                            update = { textureView ->
+                                fitTextureToVideo(
+                                    textureView = textureView,
+                                    videoWidth = videoWidthPx,
+                                    videoHeight = videoHeightPx
+                                )
+                            },
                             modifier = Modifier.fillMaxSize()
                         )
                     }
                 }
                 if (!hasRenderedFirstFrame) {
                     CoverImage(url = media.coverUrl, fallbackMediaUrl = media.previewUrl)
+                }
+                if (isBuffering && previewError == null) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(32.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        strokeWidth = 3.dp
+                    )
                 }
                 previewError?.let { message ->
                     Text(
@@ -988,13 +1061,14 @@ private fun VideoPreview(media: ParsedMedia, previewSessionKey: Int) {
             ) {
                 IconButton(
                     onClick = {
-                        player?.let { mediaPlayer ->
-                            if (isMediaPlayerPlaying(mediaPlayer)) {
-                                mediaPlayer.pause()
-                                isPlaying = false
+                        player?.let { activePlayer ->
+                            if (activePlayer.isPlaying) {
+                                activePlayer.pause()
                             } else {
-                                mediaPlayer.start()
-                                isPlaying = true
+                                if (activePlayer.playbackState == Player.STATE_ENDED) {
+                                    activePlayer.seekTo(0)
+                                }
+                                activePlayer.play()
                             }
                         }
                     }
@@ -1006,7 +1080,8 @@ private fun VideoPreview(media: ParsedMedia, previewSessionKey: Int) {
                     )
                 }
                 Text(
-                    text = formatPlaybackTime(positionMillis) + " / " + formatPlaybackTime(durationMillis),
+                    text = formatPlaybackTime(positionMillis) + " / " +
+                        durationMillis.takeIf { it > 0 }?.let(::formatPlaybackTime).orEmpty().ifBlank { "--:--" },
                     color = Color.White,
                     style = MaterialTheme.typography.labelSmall
                 )
@@ -1460,15 +1535,10 @@ private fun fitTextureToVideo(textureView: TextureView, videoWidth: Int, videoHe
 }
 
 private const val PROGRESS_UPDATE_INTERVAL_MILLIS = 250L
-private const val FIRST_FRAME_FALLBACK_MILLIS = 750L
+private const val PERFORMANCE_LOG_TAG = "JiquPerformance"
 private const val COVER_CONNECT_TIMEOUT_MILLIS = 10_000
 private const val COVER_READ_TIMEOUT_MILLIS = 15_000
 private const val COVER_USER_AGENT = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36"
-private val PREVIEW_REQUEST_HEADERS = mapOf(
-    "User-Agent" to COVER_USER_AGENT,
-    "Accept" to "video/mp4,video/*;q=0.9,*/*;q=0.8",
-    "Accept-Encoding" to "identity"
-)
 private const val ZUIYOU_PLATFORM_NAME = "最右"
 
 internal suspend fun downloadWithMediaStore(

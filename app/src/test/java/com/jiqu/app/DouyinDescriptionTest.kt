@@ -1,7 +1,9 @@
 package com.jiqu.app
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DouyinDescriptionTest {
@@ -23,5 +25,11 @@ class DouyinDescriptionTest {
             "正文内容",
             sanitizeDescription("正文内容 ……版本过低，升级后可展示全部信息")
         )
+    }
+
+    @Test
+    fun fetchesThePageOnlyWhenTheApiDescriptionIsTruncated() {
+        assertTrue(shouldFetchCompleteDouyinDescription("正文内容 ……版本过低，升级后可展示全部信息"))
+        assertFalse(shouldFetchCompleteDouyinDescription("API 已返回完整文案"))
     }
 }
